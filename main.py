@@ -24,7 +24,7 @@ def is_trading_session():
     return 12 <= now_utc <= 17
 
 def run_mtf_ai():
-    if not is_trading_session():
+   if False:
         print("⏸ Outside of Gold Killzone. Scanning paused...")
         return
 
