@@ -5,8 +5,8 @@ import os
 import pandas as pd
 
 # ... CONFIG ...
-TOKEN = os.getenv("TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+TOKEN = os.getenv("8543380022:AAFhiCuXLyhWGv63Ok0hLHcq1pqi1WwkGpQ)
+CHAT_ID = os.getenv("7862421096")
 
 # ADD THIS LINE HERE TO TEST IMMEDIATELY
 requests.get(f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text=🚨 EMERGENCY TEST: IF YOU SEE THIS IT WORKS")
