@@ -74,6 +74,7 @@ def run_smc_ai():
 
 while True:
     try:
+        send_alert("🚀 System Check: AI is online and connected to Telegram!")
         run_smc_ai()
     except Exception as e:
         print(f"Error: {e}")
