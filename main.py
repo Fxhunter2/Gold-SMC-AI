@@ -4,11 +4,15 @@ import time
 import os
 import pandas as pd
 
-# CONFIG
-TOKEN = os.getenv("8543380022:AAFhiCuXLyhWGv63Ok0hLHcq1pqi1WwkGpQ")
-CHAT_ID = os.getenv("7862421096")
-SYMBOL = "GC=F" # Gold Futures
+# ... CONFIG ...
+TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
+# ADD THIS LINE HERE TO TEST IMMEDIATELY
+requests.get(f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text=🚨 EMERGENCY TEST: IF YOU SEE THIS IT WORKS")
+
+def run_smc_ai():
+    # ... rest of code
 def send_signal(side, entry, sl, tp, rr="1:3"):
     msg = (f"🔔 *NEW SMC GOLD SIGNAL*\n"
            f"Type: {side} LIMIT\n\n"
