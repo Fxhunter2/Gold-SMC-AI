@@ -3,57 +3,90 @@ import requests
 import time
 import os
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 
-# CONFIG
+# --- CONFIG ---
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 SYMBOL = "GC=F"
+
+# Memory to track the trade
+active_position = None 
 
 def send_alert(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={msg}&parse_mode=Markdown"
     requests.get(url)
 
-def run_scalper():
-    # 1. Fetch fast 1m and 5m data
-    print(f"[{time.strftime('%H:%M:%S')}] ⚡ Scalp Scanning...")
-    df_5m = yf.download(SYMBOL, period="1d", interval="5m", progress=False)
-    df_1m = yf.download(SYMBOL, period="1d", interval="1m", progress=False)
+def check_trade_status(current_price):
+    global active_position
+    if not active_position:
+        return
 
-    for df in [df_5m, df_1m]:
+    entry = active_position['entry']
+    tp = active_position['tp']
+    sl = active_position['sl']
+    side = active_position['side']
+
+    # Calculate Pips (1.00 USD = 100 Pips)
+    pip_diff = abs(current_price - entry) * 100
+
+    # 1. CHECK TAKE PROFIT
+    if (side == "BUY" and current_price >= tp) or (side == "SELL" and current_price <= tp):
+        send_alert(f"✅ *TAKE PROFIT HIT!*\n💰 Result: +{pip_diff:.0f} Pips\nTarget of {tp:.2f} reached. Great job stay disciplined!")
+        active_position = None # Reset for next trade
+
+    # 2. CHECK STOP LOSS
+    elif (side == "BUY" and current_price <= sl) or (side == "SELL" and current_price >= sl):
+        send_alert(f"❌ *STOP LOSS HIT*\n📉 Result: -{pip_diff:.0f} Pips\nPrice hit {sl:.2f}. This is just a part of trading—stay focused for the next setup.")
+        active_position = None # Reset for next trade
+
+def run_day_trader():
+    global active_position
+    print(f"[{time.strftime('%H:%M:%S')}] 📅 Day Trade Scanning...")
+    
+    # Fetch Data
+    df_1h = yf.download(SYMBOL, period="20d", interval="1h", progress=False)
+    df_15m = yf.download(SYMBOL, period="5d", interval="15m", progress=False)
+
+    for df in [df_1h, df_15m]:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-    if df_1m.empty: return
+    if df_1h.empty or df_15m.empty: return
 
-    # 2. SMC Scalp Logic
-    # HTF Bias (5m) - Current Trend
-    sma_5m = df_5m['Close'].rolling(window=10).mean().iloc[-1]
-    curr_p = df_1m['Close'].iloc[-1]
-    
-    # Identify Liquidity Sweep on 1m
-    recent_high = df_1m['High'].iloc[-15:-1].max()
-    recent_low = df_1m['Low'].iloc[-15:-1].min()
+    curr_p = df_15m['Close'].iloc[-1]
 
-    # 3. Signals
-    # BUY: Price swept 1m low AND is above 5m trend
-    if curr_p < recent_low and curr_p > sma_5m:
-        sl = curr_p - 1.20 # Tight SL for Scalp
-        tp = curr_p + 2.50 # Quick 1:2 RR
-        send_alert(f"⚡ *SCALP BUY XAUUSD*\nEntry: {curr_p:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}")
+    # --- MONITOR ACTIVE TRADE ---
+    if active_position:
+        check_trade_status(curr_p)
+        return # Don't look for new trades if one is already open
 
-    # SELL: Price swept 1m high AND is below 5m trend
-    elif curr_p > recent_high and curr_p < sma_5m:
-        sl = curr_p + 1.20
-        tp = curr_p - 2.50
-        send_alert(f"⚡ *SCALP SELL XAUUSD*\nEntry: {curr_p:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}")
+    # --- LOOK FOR NEW SIGNALS ---
+    htf_high = df_1h['High'].iloc[-24:-1].max() 
+    htf_low = df_1h['Low'].iloc[-24:-1].min()
 
-# Start Message
-send_alert("🏃 Scalper AI is Active. Watching 1m/5m structure for XAUUSD.")
+    # BULLISH: Sweep PDL then 15m CHoCH
+    if df_15m['Low'].iloc[-1] < htf_low:
+        if curr_p > df_15m['High'].iloc[-5:-1].max():
+            sl_val = curr_p - 2.5
+            tp_val = curr_p + 7.5 # Target 750 pips (1:3 RR)
+            active_position = {'side': 'BUY', 'entry': curr_p, 'tp': tp_val, 'sl': sl_val}
+            send_alert(f"💎 *XAUUSD BUY SIGNAL*\n\nEntry: {curr_p:.2f}\nSL: {sl_val:.2f}\nTP: {tp_val:.2f}\n\n*Status:* Trade is now being tracked...")
+
+    # BEARISH: Sweep PDH then 15m CHoCH
+    elif df_15m['High'].iloc[-1] > htf_high:
+        if curr_p < df_15m['Low'].iloc[-5:-1].min():
+            sl_val = curr_p + 2.5
+            tp_val = curr_p - 7.5
+            active_position = {'side': 'SELL', 'entry': curr_p, 'tp': tp_val, 'sl': sl_val}
+            send_alert(f"💎 *XAUUSD SELL SIGNAL*\n\nEntry: {curr_p:.2f}\nSL: {sl_val:.2f}\nTP: {tp_val:.2f}\n\n*Status:* Trade is now being tracked...")
+
+# Startup Notification
+send_alert("📅 *Gold Day Trader + Tracker Active*\nTracking Pips, TP, and SL hits in real-time.")
 
 while True:
     try:
-        run_scalper()
+        run_day_trader()
     except Exception as e:
         print(f"Error: {e}")
-    time.sleep(60) # Scan every minute for fast entries
+    time.sleep(60) # Scan every 1 minute for better TP/SL tracking
