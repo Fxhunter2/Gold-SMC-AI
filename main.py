@@ -6,8 +6,8 @@ import pandas as pd
 from datetime import datetime, timezone
 
 # CONFIG
-TOKEN = os.getenv("TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+TOKEN = os.getenv("8543380022:AAFhiCuXLyhWGv63Ok0hLHcq1pqi1WwkGpQ")
+CHAT_ID = os.getenv("8543380022")
 NEWS_KEY = os.getenv("NEWS_API_KEY") # Get from FinancialModelingPrep
 SYMBOL = "GC=F" # Gold
 
