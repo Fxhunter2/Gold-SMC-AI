@@ -3,48 +3,106 @@ import requests
 import time
 import os
 import pandas as pd
+from datetime import datetime, timezone
 
 # CONFIG
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-SYMBOL = "GC=F"
+NEWS_KEY = os.getenv("NEWS_API_KEY") # Get from FinancialModelingPrep
+SYMBOL = "GC=F" # Gold
 
-# --- STEP 1: DEFINE THE ALERT TOOL FIRST ---
+# --- UTILS ---
 def send_alert(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={msg}&parse_mode=Markdown"
-    try:
-        requests.get(url)
-    except Exception as e:
-        print(f"Telegram Error: {e}")
+    requests.get(url)
 
-# --- STEP 2: THE TRADING LOGIC ---
-def run_ai():
-    print(f"[{time.strftime('%H:%M:%S')}] 🔍 Scanning Gold Market...")
-    df = yf.download(SYMBOL, period="2d", interval="1h", progress=False)
-    
-    # Fix for the 'MultiIndex' issue in yfinance
+def get_data(interval, period):
+    df = yf.download(SYMBOL, period=period, interval=interval, progress=False)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
+    return df
 
-    if df.empty:
-        print("😴 No market data available.")
-        return
-
-    # Fix for 'Ambiguous Series' error - we use .iloc[-1] to get ONE value
-    current_price = df['Close'].iloc[-1]
-    prev_low = df['Low'].iloc[-2]
-
-    # SMC Sweep Detection
-    if current_price < prev_low:
-        send_alert(f"🚀 *Gold Sweep Alert*\nPrice {current_price:.2f} swept 1H Low!")
-
-# --- STEP 3: START THE BOT ---
-# This line proves the connection is working immediately
-send_alert("🤖 AI is now LIVE and scanning Gold for the Monday session!")
-
-while True:
+# --- 1. NEWS CALENDAR ---
+def check_news():
+    if not NEWS_KEY: return False, "No Key"
     try:
-        run_ai()
-    except Exception as e:
-        print(f"Running Error: {e}")
-    time.sleep(300) # Scan every 5 minutes
+        url = f"https://financialmodelingprep.com/api/v3/economic_calendar?apikey={NEWS_KEY}"
+        events = requests.get(url).json()
+        now = datetime.now(timezone.utc)
+        for event in events[:10]:
+            event_time = datetime.strptime(event['date'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+            if event['currency'] == 'USD' and event['impact'] == 'High':
+                diff = (event_time - now).total_seconds() / 60
+                if 0 < diff < 30: # 30 mins before news
+                    return True, event['event']
+        return False, None
+    except: return False, None
+
+# --- 2. INTERACTIVE CHAT ---
+def handle_messages():
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1"
+        data = requests.get(url).json()
+        if data['result']:
+            msg = data['result'][0]['message']['text'].lower()
+            u_id = data['result'][0]['update_id']
+            if "hello" in msg or "hi" in msg:
+                send_alert("👋 Hello! I am scanning XAUUSD using HTF (4H) and LTF (5m) SMC logic.")
+            requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={u_id + 1}")
+    except: pass
+
+# --- 3. SMC LOGIC (HTF/LTF) ---
+def run_smc_scan():
+    # A. Check Market Status
+    day = datetime.utcnow().weekday()
+    if day >= 5: # Saturday/Sunday
+        print("Market Closed.")
+        return "CLOSED"
+
+    # B. Check News
+    is_news, event_name = check_news()
+    if is_news:
+        print(f"Skipping due to News: {event_name}")
+        return "NEWS"
+
+    # C. HTF (4H) TREND & LIQUIDITY
+    df_4h = get_data("1h", "10d") # yfinance 4h is buggy, we use 1h to build 4h
+    htf_high = df_4h['High'].iloc[-48:-1].max() 
+    htf_low = df_4h['Low'].iloc[-48:-1].min()
+    
+    # D. LTF (5m) CHoCH & ENTRY
+    df_5m = get_data("5m", "1d")
+    curr_price = df_5m['Close'].iloc[-1]
+    
+    # BULLISH SETUP: HTF Sweep + LTF CHoCH
+    if df_5m['Low'].min() < htf_low:
+        # CHoCH: Price breaks above last 5m Swing High
+        if curr_price > df_5m['High'].iloc[-10:-1].max():
+            sl = df_5m['Low'].iloc[-5:].min() - 1.0
+            tp = curr_price + (abs(curr_price - sl) * 3) # 1:3 RR
+            send_alert(f"🟢 *XAUUSD BUY LIMIT*\nEntry: {curr_price:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}\nType: HTF Sweep + LTF CHoCH")
+
+    # BEARISH SETUP: HTF Sweep + LTF CHoCH
+    elif df_5m['High'].max() > htf_high:
+        if curr_price < df_5m['Low'].iloc[-10:-1].min():
+            sl = df_5m['High'].iloc[-5:].max() + 1.0
+            tp = curr_price - (abs(sl - curr_price) * 3)
+            send_alert(f"🔴 *XAUUSD SELL LIMIT*\nEntry: {curr_price:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}\nType: HTF Sweep + LTF CHoCH")
+            
+    return "ACTIVE"
+
+# --- MAIN LOOP ---
+send_alert("🤖 *SMC AI Initialized*\nHTF: 4H/1H | LTF: 5m\nStatus: Scanning Gold...")
+
+last_market_msg = False
+while True:
+    handle_messages()
+    status = run_smc_scan()
+    
+    if status == "CLOSED" and not last_market_msg:
+        send_alert("😴 *Market is Closed.* Waiting for Monday signals...")
+        last_market_msg = True
+    elif status == "ACTIVE":
+        last_market_msg = False
+        
+    time.sleep(30)
